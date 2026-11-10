@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: voice-of-the-stone
+    env: python
+    plan: free
+    buildCommand: pip install -r server/requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT --app-dir server
+    envVars:
+      - key: VOTS_MVP_THRESHOLD
+        value: "0.6"

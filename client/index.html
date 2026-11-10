@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1a1512">
+<title>Voice of the Stone — Chola Inscription Reader</title>
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <p class="kicker">Brihadeeswarar Temple · Thanjavur</p>
+    <h1>Voice of the Stone</h1>
+    <p class="sub">A Chola-era inscription reader. It always says what it read, what it could not, and what is interpretation.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="error" class="banner error" hidden></div>
+  <div id="notice" class="banner" hidden></div>
+
+  <!-- Onboarding -->
+  <section id="screen-onboard" class="card">
+    <p id="ob-prompt" class="prompt">Vanakkam. Hello.</p>
+    <h2 id="ob-title">Which language should I speak?</h2>
+    <p id="ob-voice-status" class="muted">Listening for 5 seconds… or tap below.</p>
+    <div id="ob-buttons" class="btn-row"></div>
+  </section>
+
+  <!-- Capture -->
+  <section id="screen-capture" class="card" hidden>
+    <h2>Show me the inscription</h2>
+    <label class="file-label">Choose a photo of the stone
+      <input id="photo-input" type="file" accept="image/*">
+    </label>
+    <button id="upload-btn" class="btn primary">Read this photo</button>
+    <h3>Or try a demo inscription</h3>
+    <p class="muted">Published Hultzsch readings with temple-wall photos. Photo-to-text pairing is unverified in this demo.</p>
+    <ul id="demo-list" class="demo-list"></ul>
+  </section>
+
+  <!-- Processing -->
+  <section id="screen-processing" class="card" hidden>
+    <h2>Reading the stone…</h2>
+    <p class="muted">No claims yet — the report comes first.</p>
+  </section>
+
+  <!-- Review -->
+  <section id="screen-review" class="card" hidden>
+    <h2>What I could read</h2>
+    <p id="coverage" class="prompt"></p>
+    <ol id="lines"></ol>
+    <div class="btn-row">
+      <button id="accept-btn" class="btn primary">Accept &amp; explain</button>
+      <button id="recapture-btn" class="btn">Recapture</button>
+    </div>
+  </section>
+
+  <!-- Explanation -->
+  <section id="screen-explain" class="card" hidden>
+    <h2>Explanation</h2>
+    <div id="claims"></div>
+    <p id="audio-note" class="muted"></p>
+    <div class="btn-row">
+      <button class="btn lang-btn" data-lang="tamil">தமிழ்</button>
+      <button class="btn lang-btn" data-lang="english">English</button>
+    </div>
+    <div class="btn-row">
+      <button id="next-btn" class="btn">Capture next</button>
+      <button id="new-btn" class="btn">New inscription</button>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  <p>Texts: South-Indian Inscriptions Vol. II (Hultzsch/Venkayya), public domain. Photos: Wikimedia Commons contributors, CC BY / BY-SA — attribution shown with each demo photo.</p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
