@@ -10,6 +10,21 @@ const api = async (path, opts = {}) => {
 
 let sessionId = null;
 let corpus = [];
+let audioList = [], audioIdx = 0, currentSound = null;
+
+function stopAudio() {
+  if (currentSound) { try { currentSound.pause(); } catch { /* noop */ } currentSound = null; }
+}
+function playFrom(i) {
+  stopAudio();
+  if (i >= audioList.length) return;
+  audioIdx = i;
+  const a = new Audio(audioList[i].url);
+  currentSound = a;
+  a.onended = () => playFrom(i + 1);
+  a.onerror = () => { note("Some audio failed to load; the full text is shown."); playFrom(i + 1); };
+  a.play().catch(() => { $("audio-note").textContent = "Tap replay to hear the audio."; });
+}
 
 function show(id) {
   for (const s of ["screen-onboard", "screen-capture", "screen-processing", "screen-review", "screen-explain"]) {
@@ -22,29 +37,58 @@ function note(msg) { const n = $("notice"); n.textContent = msg; n.hidden = !msg
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 /* ---- onboarding: one 5s voice window, then buttons only (Q1 ruling) ---- */
+async function recordWav(seconds) {
+  // 16 kHz mono WAV: the one format our STT path accepts everywhere.
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks = [];
+  proc.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  src.connect(proc);
+  proc.connect(ctx.destination);
+  await new Promise((r) => setTimeout(r, seconds * 1000));
+  proc.disconnect(); src.disconnect();
+  stream.getTracks().forEach((t) => t.stop());
+  await ctx.close();
+  const len = chunks.reduce((n, c) => n + c.length, 0);
+  const pcm = new Float32Array(len);
+  let off = 0;
+  for (const c of chunks) { pcm.set(c, off); off += c.length; }
+  const buf = new ArrayBuffer(44 + len * 2);
+  const v = new DataView(buf);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, "RIFF"); v.setUint32(4, 36 + len * 2, true); wstr(8, "WAVE"); wstr(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); wstr(36, "data"); v.setUint32(40, len * 2, true);
+  for (let i = 0; i < len; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
 async function voiceAttempt(question) {
   const status = $("ob-voice-status");
+  status.textContent = "Listening for 5 seconds… or tap below.";
+  let wav = null;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const rec = new MediaRecorder(stream);
-    const chunks = [];
-    rec.ondataavailable = (e) => chunks.push(e.data);
-    rec.start();
-    status.textContent = "Listening for 5 seconds… or tap below.";
-    await new Promise((r) => setTimeout(r, 5000));
-    rec.stop();
-    stream.getTracks().forEach((t) => t.stop());
+    wav = await recordWav(5);
   } catch {
     status.textContent = "Microphone unavailable — please tap below.";
     return null;
   }
-  // MVP: audio posted for shape-compat; stub STT always asks for a tap.
-  const data = await api(`/api/sessions/${sessionId}/onboarding`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, mode: "voice" }),
-  });
-  return data;
+  const fd = new FormData();
+  fd.append("question", question);
+  fd.append("audio", wav, "clip.wav");
+  try {
+    const res = await fetch(`/api/sessions/${sessionId}/voice`, { method: "POST", body: fd });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
+  } catch {
+    return { accepted: false, guess: question === "q1" ? "tamil" : "photo", requires_tap: true };
+  }
 }
 
 async function runQuestion(question, title, options) {
@@ -69,6 +113,7 @@ async function runQuestion(question, title, options) {
     box.appendChild(b);
   }
   const heard = await voiceAttempt(question);
+  if (heard && heard.accepted) { afterAnswer(question, heard); return; }
   if (heard && heard.guess && btns[heard.guess]) {
     btns[heard.guess].classList.add("guess");
     $("ob-voice-status").textContent = "I think you said “" + heard.guess + "” — tap to confirm.";
@@ -167,9 +212,14 @@ function showExplanation(data) {
     div.appendChild(document.createTextNode(c.text));
     box.appendChild(div);
   }
-  $("audio-note").textContent = data.audio.status === "stubbed"
-    ? "Voice: " + data.audio.detail
-    : "";
+  stopAudio();
+  audioList = (data.audio && data.audio.status === "ready") ? data.audio.sentences : [];
+  if (audioList.length) {
+    $("audio-note").textContent = "";
+    playFrom(0);
+  } else {
+    $("audio-note").textContent = "Voice: " + ((data.audio && data.audio.detail) || "unavailable");
+  }
   note(data.quality_flag === "unverified"
     ? "This language rendering is not yet verified by a native-speaker reviewer."
     : "");
@@ -217,5 +267,6 @@ document.querySelectorAll(".lang-btn").forEach((b) => {
 });
 $("next-btn").onclick = () => location.reload(); // fresh session, then capture
 $("new-btn").onclick = () => location.reload();
+$("replay-btn").onclick = () => { if (audioList.length) playFrom(0); };
 
 boot();

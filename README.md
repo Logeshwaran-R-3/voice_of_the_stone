@@ -9,11 +9,22 @@ behind interfaces. Full contract: `design-plan.md` (Final).
 
 ```sh
 pip install -r server/requirements.txt
+pip install -r server/requirements-test.txt   # pytest + httpx2 (silences the TestClient warning)
+pytest server/tests
 uvicorn app:app --app-dir server
 ```
 
 Open http://127.0.0.1:8000 in a browser. Check phone/tablet/PC layouts with
 Chrome DevTools resolution switching.
+
+## Voice setup (Gnani)
+
+Copy `.env.example` to `.env` and set `GNANI_API_KEY` (local only, never
+committed). On Render, set `GNANI_API_KEY` in the dashboard under Environment.
+Without a key the app runs text-only with stubbed audio; nothing breaks.
+Voices default to Asmita (Tamil) and Devika (English) on Timbre v2.5 —
+audition alternatives in the Gnani playground and override with
+`VOTS_VOICE_TA` / `VOTS_VOICE_EN`.
 
 ## Deploy (Render)
 
@@ -34,9 +45,11 @@ provisional until calibration).
 ## Status
 
 - Working: full photo/demo flow end to end, claim tags, coverage statements,
-  partial-translation flags, language re-render, recapture recovery.
-- Stubbed: recognition (canned), voice in/out (Gnani key + Meta key pending),
-  Tamil rendering (draft, unverified).
-- Not yet runtime-verified here: this sandbox has no Python/Node runtimes, so
-  `pytest server/tests` and the server smoke test must run on Render or a dev
-  machine before any demo claim. No test has been seen passing yet.
+  partial-translation flags, language re-render, recapture recovery, Gnani
+  voice in (5s STT clips, closed-set match, tap fallback) and out
+  (sentence-by-sentence TTS with queued playback). 13 API tests, all passing.
+- Stubbed: recognition (canned; Tesseract/Meta next), Tamil rendering
+  (draft, unverified).
+- Voice needs `GNANI_API_KEY`; without it the app degrades to text-only.
+- Note: this sandbox has no Python/Node runtimes, so tests and smoke checks
+  run on your machine / Render, not here.

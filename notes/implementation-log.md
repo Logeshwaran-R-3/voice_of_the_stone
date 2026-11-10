@@ -59,3 +59,22 @@ Sources: Meta/Llama docs via web search; mixed signals, treat as paper viability
 - Verified here: all JSON valid; client routes resolve; corpus/photo/ta ids join.
   NOT verified here (no Python/Node in sandbox): pytest run, server smoke test.
   Those must pass on Render/dev machine before any demo claim.
+
+## Voice phase (2026-11-10, owner approved)
+- Gnani docs researched: TTS = Timbre v2.5 REST (raw WAV back), STT = Prisma v3.0
+  REST with format=transliterate for Latin keyword matching. Spec's vachana-voice-v3
+  preset names are outdated; voices now per-model (Asmita/Devika provisional).
+- server/speech.py: raw-httpx wrapper, key from GNANI_API_KEY only, never logged.
+- app.py: POST /voice (closed-set accept or tap fallback), GET /api/audio/{id}
+  per-sentence synthesis, numbers spelled out for TTS, timeouts + 503 fallback.
+- client: 16kHz WAV recorder for 5s windows, sequential audio queue + replay,
+  per-sentence failure skips with text always shown.
+- tests: 7 new (13 total), Gnani mocked, key-independent. httpx2 added to
+  requirements-test.txt to silence the Starlette TestClient warning.
+- Key handling: .env.example + .gitignore; Render dashboard env by owner; the key
+  is never pasted in chat or code.
+- Verification run (2026-11-10, project env, Python 3.15.2): 13 passed.
+  Fixed on the way: tests/conftest.py sys.path setup, dual-style app import,
+  single appmod resolution (a shadow `import app` copy had silently broken 2
+  voice/audio mocks). Sandbox blocks TestClient sockets, so the suite runs
+  unsandboxed; remaining warning is the known httpx2 notice.

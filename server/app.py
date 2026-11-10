@@ -16,9 +16,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from speech import Speech, SpeechError
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data" / "mvp"
@@ -149,6 +151,77 @@ class StubRecognizer(Recognizer):
 
 RECOGNIZER: Recognizer = StubRecognizer()
 
+def _load_dotenv() -> None:
+    """Local-dev convenience: read repo-root .env (Render uses dashboard env)."""
+    path = ROOT / ".env"
+    if not path.exists():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+
+
+_load_dotenv()
+SPEECH = Speech()
+AUDIO_CACHE: dict[str, tuple[str, str]] = {}  # id -> (sentence, language)
+
+NUMBER_WORDS = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
+                "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
+                "10": "ten", "11": "eleven", "12": "twelve", "13": "thirteen",
+                "14": "fourteen", "15": "fifteen", "16": "sixteen",
+                "17": "seventeen", "18": "eighteen", "19": "nineteen",
+                "20": "twenty"}
+
+
+def sayable(text: str) -> str:
+    """Spell out small numbers so TTS reads them as words, not digits."""
+    return re.sub(r"\b\d+\b", lambda m: NUMBER_WORDS.get(m.group(0), m.group(0)), text)
+
+
+def split_sentences(text: str) -> list[str]:
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", text) if p.strip()]
+    out: list[str] = []
+    for p in parts:
+        while len(p) > 450:  # keep each TTS call short; split on word boundary
+            cut = p.rfind(" ", 0, 450)
+            cut = cut if cut > 0 else 450
+            out.append(p[:cut])
+            p = p[cut:].strip()
+        out.append(p)
+    return out
+
+
+def audio_payload(text: str, language: str) -> dict[str, Any]:
+    if not SPEECH.configured:
+        return {"status": "stubbed",
+                "detail": "Gnani TTS wires up when the API key is provided."}
+    if len(AUDIO_CACHE) > 500:
+        AUDIO_CACHE.clear()
+    sentences = []
+    for sent in split_sentences(sayable(text)):
+        aid = uuid.uuid4().hex[:12]
+        AUDIO_CACHE[aid] = (sent, language)
+        sentences.append({"id": aid, "url": f"/api/audio/{aid}"})
+    return {"status": "ready", "sentences": sentences}
+
+
+VOICE_KEYWORDS = {
+    "q1": {"tamil": ["tamil", "tamizh", "thamil"],
+           "english": ["english", "angilam", "ingili"]},
+    "q2": {"photo": ["photo", "upload", "picture", "camera", "file"]},
+}
+VOICE_DEFAULT = {"q1": "tamil", "q2": "photo"}
+
+
+def match_voice(transcript: str, question: str) -> tuple[Optional[str], float]:
+    toks = _tokens(transcript)
+    for value, keys in VOICE_KEYWORDS[question].items():
+        if toks & set(keys):
+            return value, 1.0
+    return None, 0.0
+
 
 # ------------------------------------------------------------- retrieval
 def _tokens(s: str) -> set[str]:
@@ -256,8 +329,7 @@ def explain(report: Report, language: str) -> dict[str, Any]:
         text = "\n".join(c.text for c in claims)
     return {"claims": [c.model_dump() for c in claims], "text": text,
             "language": language, "quality_flag": flag,
-            "audio": {"status": "stubbed",
-                      "detail": "Gnani TTS wires up when the API key is provided."},
+            "audio": audio_payload(text, language),
             "recovery": recovery,
             "retrieval_match": report.retrieval_match}
 
@@ -384,6 +456,54 @@ def re_explain(sid: str, body: ExplainIn) -> dict[str, Any]:
     s.language = code
     s.state = State.followup
     return {"state": s.state.value, **explain(s.report, code)}
+
+
+@app.post("/api/sessions/{sid}/voice")
+async def voice_answer(sid: str, question: str = Form(...),
+                       audio: UploadFile = File(...)) -> dict[str, Any]:
+    """One 5s onboarding clip -> closed-set match. Never auto-accepts unsure."""
+    s = get_session(sid)
+    if question == "q1":
+        need_state(s, State.q1)
+    elif question == "q2":
+        need_state(s, State.q2)
+    else:
+        raise HTTPException(400, "question must be q1 or q2")
+    blob = await audio.read()
+    transcript = ""
+    if blob:
+        try:
+            transcript = await SPEECH.transcribe(blob)
+        except SpeechError:
+            transcript = ""
+    value, conf = match_voice(transcript, question)
+    if value and conf >= 1.0:
+        if question == "q1":
+            s.language = "ta" if value == "tamil" else "en-IN"
+            s.state = State.q2
+            return {"accepted": True, "language": s.language,
+                    "state": s.state.value, "heard": transcript}
+        s.mode = "photo"
+        s.state = State.capture
+        return {"accepted": True, "mode": s.mode, "state": s.state.value,
+                "heard": transcript}
+    return {"accepted": False, "guess": value or VOICE_DEFAULT[question],
+            "confidence": 0.0, "requires_tap": True, "state": s.state.value,
+            "heard": transcript,
+            "detail": "Voice heard; tap to confirm."}
+
+
+@app.get("/api/audio/{aid}")
+async def audio(aid: str) -> Response:
+    try:
+        text, language = AUDIO_CACHE[aid]
+    except KeyError:
+        raise HTTPException(404, "unknown audio")
+    try:
+        blob = await SPEECH.synthesize(text, language)
+    except SpeechError as e:
+        raise HTTPException(503, f"speech unavailable: {e}")
+    return Response(content=blob, media_type="audio/wav")
 
 
 @app.get("/api/corpus")
