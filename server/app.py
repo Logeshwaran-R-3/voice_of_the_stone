@@ -523,7 +523,8 @@ def corpus() -> dict[str, Any]:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "threshold": str(THRESHOLD),
-            "recognizer": RECOGNIZER.name}
+            "recognizer": RECOGNIZER.name,
+            "voice": "configured" if SPEECH.configured else "unconfigured"}
 
 
 CLIENT = ROOT / "client"
